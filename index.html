@@ -636,6 +636,7 @@ function getSpawnCount() { return Math.floor(1 + gameTime / 60); }
 
 // ─── 레벨업 시스템 ────────────────────────────────────────────
 let levelUpChoices = [];
+let lastPicked = null;
 
 function gainXP(amount) {
   player.xp += amount * (player.xpMult || 1);
@@ -677,6 +678,10 @@ function generateChoices(count) {
 function selectChoice(idx) {
   const ch = levelUpChoices[idx];
   if (!ch) return;
+
+  // 마지막 선택을 저장(스킬바 표시 우선순위에 사용)
+  lastPicked = { type: ch.type, key: ch.key };
+
   if (ch.type === 'weapon') {
     if (ch.upgrade) upgradeWeapon(ch.key);
     else addWeapon(ch.key);
@@ -685,6 +690,7 @@ function selectChoice(idx) {
   }
   state = 'playing';
 }
+
 
 // ─── 그리기 헬퍼 ──────────────────────────────────────────────
 function roundRect(ctx, x, y, w, h, r) {
@@ -701,18 +707,58 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function wrapText(ctx, text, cx, y, maxW, lineH) {
-  // 한글은 글자 단위로 줄바꿈
+function wrapText(ctx, text, cx, y, maxW, lineH, maxLines = 999) {
+  // 단어(공백) 기준으로 우선 줄바꿈, 너무 긴 토큰은 글자 단위로 보정
+  const words = String(text || '').split(' ');
   let line = '';
-  for (const char of text) {
-    const test = line + char;
-    if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, cx, y);
-      line = char;
-      y += lineH;
-    } else line = test;
+  let lines = 0;
+
+  function flushLine(final=false, addEllipsis=false) {
+    if (!line) return;
+    let out = line;
+    if (addEllipsis) out = out.replace(/\s+$/, '') + '…';
+    ctx.fillText(out, cx, y);
+    y += lineH;
+    line = '';
+    lines++;
   }
-  if (line) ctx.fillText(line, cx, y);
+
+  for (let wi = 0; wi < words.length; wi++) {
+    const w = words[wi];
+    const test = line ? (line + ' ' + w) : w;
+
+    if (ctx.measureText(test).width <= maxW) {
+      line = test;
+      continue;
+    }
+
+    // 현재 라인이 있으면 먼저 출력
+    if (line) {
+      if (lines + 1 >= maxLines) { flushLine(false, true); return; }
+      flushLine();
+    }
+
+    // 단어 자체가 너무 길면 글자 단위로 쪼개기
+    if (ctx.measureText(w).width > maxW) {
+      let chunk = '';
+      for (const ch of w) {
+        const t = chunk + ch;
+        if (ctx.measureText(t).width > maxW && chunk) {
+          if (lines + 1 >= maxLines) { line = chunk; flushLine(false, true); return; }
+          line = chunk; flushLine();
+          chunk = ch;
+        } else chunk = t;
+      }
+      line = chunk;
+    } else {
+      line = w;
+    }
+  }
+
+  if (line) {
+    if (lines + 1 >= maxLines) { flushLine(false, true); return; }
+    flushLine(true, false);
+  }
 }
 
 function drawEnemy(e, type) {
@@ -960,20 +1006,40 @@ function drawHUD() {
   ctx.fillText(`HP ${Math.ceil(player.hp)} / ${player.maxHp}`, margin + 6, hpY + hpH - 3);
   ctx.restore();
 
-  // 스킬바(무기 슬롯) — 좌측 하단에 붙여서 표시
+  // 스킬바(무기+패시브) — 좌측 하단에 붙여서 표시
   const slot = isMobile ? 34 : 36;
   const gap = 8;
   const slotY = xpY - 18 - slot; // XP 바 위에 여유 간격 확보(텍스트/겹침 방지)
   const barW = hpW;
 
-  const entries = Object.entries(player.weapons);
+  const weaponEntries = Object.entries(player.weapons).map(([key, w]) => ({
+    kind: 'weapon', key, level: w.level, w, def: WEAPONS[key]
+  }));
+  const passiveEntries = Object.entries(player.passives)
+    .filter(([key, lvl]) => lvl > 0)
+    .map(([key, lvl]) => ({
+      kind: 'passive', key, level: lvl, def: PASSIVES[key]
+    }));
+
+  let entries = weaponEntries.concat(passiveEntries);
+
+  // 방금 고른 스킬이 화면에 안 보이는 느낌을 줄이기 위해 우선 표시
+  if (lastPicked) {
+    entries.sort((a, b) => {
+      const am = (a.kind === lastPicked.type && a.key === lastPicked.key) ? 1 : 0;
+      const bm = (b.kind === lastPicked.type && b.key === lastPicked.key) ? 1 : 0;
+      return bm - am;
+    });
+  }
+
   const maxSlots = Math.max(1, Math.floor((barW + gap) / (slot + gap)));
   const shown = entries.slice(0, maxSlots);
 
+
   ctx.save();
   let i = 0;
-  for (const [key, w] of shown) {
-    const def = WEAPONS[key];
+  for (const it of shown) {
+    const def = it.def;
     const x = margin + i * (slot + gap);
 
     // 슬롯 배경
@@ -994,18 +1060,24 @@ function drawHUD() {
     ctx.fillStyle = '#fff';
     ctx.font = `10px 'Noto Sans KR', sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(`Lv${w.level}`, x + slot - 10, slotY + 13);
+    ctx.fillText(`Lv${it.level}`, x + slot - 10, slotY + 13);
 
-    // 쿨다운 바
-    const denom = (def.baseCooldown * (player.cdMult || 1));
-    const cd = denom ? (w.cooldownTimer / denom) : 0;
-    ctx.fillStyle = def.color + '88';
-    ctx.fillRect(x, slotY + slot - 4, slot * (1 - cd), 4);
+    // 하단 표시: 무기면 쿨다운, 패시브면 고정 바
+    if (it.kind === 'weapon') {
+      const denom = (def.baseCooldown * (player.cdMult || 1));
+      const cd = denom ? (it.w.cooldownTimer / denom) : 0;
+      ctx.fillStyle = def.color + '88';
+      ctx.fillRect(x, slotY + slot - 4, slot * (1 - cd), 4);
+    } else {
+      ctx.fillStyle = def.color + '88';
+      ctx.fillRect(x, slotY + slot - 4, slot, 4);
+    }
 
     i++;
   }
 
   // 슬롯이 더 많으면 "+N" 표시
+ "+N" 표시
   if (entries.length > shown.length) {
     const x = margin + shown.length * (slot + gap);
     if (x + slot <= margin + barW) {
@@ -1024,84 +1096,117 @@ function drawHUD() {
 }
 
 
-// ─── 레벨업 화면 ──────────────────────────────────────────────
-function drawLevelUp() {
-  ctx.save();
-  ctx.fillStyle = 'rgba(0,0,20,0.88)';
-  ctx.fillRect(0, 0, W(), H());
-
+// 레벨업 카드 레이아웃(그리기/클릭 좌표를 항상 동일하게 유지)
+function getLevelUpLayout() {
   const cw = W(), ch = H();
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#ff0';
-  ctx.font = `bold ${Math.min(32, cw / 14)}px 'Orbitron', 'Noto Sans KR', sans-serif`;
-  ctx.shadowBlur = 20;
-  ctx.shadowColor = '#ff0';
-  ctx.fillText(`⬆ 레벨 업! — 레벨 ${player.level}`, cw / 2, ch / 2 - 160);
-
-  ctx.fillStyle = '#aaa';
-  ctx.font = `${Math.min(16, cw / 26)}px 'Noto Sans KR', sans-serif`;
-  ctx.shadowBlur = 0;
-  ctx.fillText('업그레이드를 선택하세요:', cw / 2, ch / 2 - 120);
-  ctx.restore();
-
-  const cardW = Math.min(200, (cw - 80) / 3 - 12);
-  const cardH = 160;
-  const gap = 12;
+  const gap = Math.max(10, Math.min(16, cw * 0.02));
+  const cardW = Math.min(240, (cw - 60) / 3 - gap);
+  const cardH = Math.min(210, Math.max(175, ch * 0.27));
   const total = levelUpChoices.length;
   const startX = cw / 2 - (total * (cardW + gap) - gap) / 2;
-  const cardY = ch / 2 - 80;
+  const cardY = ch / 2 - cardH / 2 + 10;
+  return { cw, ch, gap, cardW, cardH, total, startX, cardY };
+}
 
-  levelUpChoices.forEach((ch, i) => {
+// ─── 레벨업 화면 ──────────────────────────────────────────────
+function drawLevelUp() {
+  const { cw, ch, gap, cardW, cardH, total, startX, cardY } = getLevelUpLayout();
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,20,0.88)';
+  ctx.fillRect(0, 0, cw, ch);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ff0';
+  ctx.shadowBlur = 22;
+  ctx.shadowColor = '#ff0';
+  ctx.font = `bold ${Math.min(40, cw / 10)}px 'Orbitron', 'Noto Sans KR', sans-serif`;
+  ctx.fillText(`⬆ 레벨 업! — 레벨 ${player.level}`, cw / 2, ch * 0.22);
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#cfc';
+  ctx.font = `bold ${Math.min(20, cw / 18)}px 'Noto Sans KR', sans-serif`;
+  ctx.fillText('업그레이드를 선택하세요', cw / 2, ch * 0.22 + 34);
+  ctx.restore();
+
+  const footerH = 30;               // 하단 [선택] 영역 확보
+  const iconY = cardY + 44;
+  const nameY = cardY + 80;
+  const tierY = cardY + 104;
+  const descY = cardY + 128;
+
+  levelUpChoices.forEach((choice, i) => {
     const cx = startX + i * (cardW + gap);
-    const isHover = mouseX >= cx && mouseX <= cx + cardW && mouseY >= cardY && mouseY <= cardY + cardH;
+    const hover = mouseX >= cx && mouseX <= cx + cardW && mouseY >= cardY && mouseY <= cardY + cardH;
+
+    const def = (choice.type === 'weapon') ? WEAPONS[choice.key] : PASSIVES[choice.key];
 
     ctx.save();
-    ctx.shadowBlur = isHover ? 30 : 10;
-    const def = ch.type === 'weapon' ? WEAPONS[ch.key] : PASSIVES[ch.key];
+    ctx.shadowBlur = hover ? 28 : 14;
     ctx.shadowColor = def.color;
-    ctx.fillStyle = isHover ? '#1a1a3a' : '#0e0e24';
-    ctx.strokeStyle = def.color;
-    ctx.lineWidth = isHover ? 2.5 : 1.5;
-    roundRect(ctx, cx, cardY, cardW, cardH, 12);
+
+    // 카드 배경/테두리
+    ctx.fillStyle = 'rgba(10,20,40,0.82)';
+    roundRect(ctx, cx, cardY, cardW, cardH, 14);
     ctx.fill();
+    ctx.lineWidth = hover ? 3 : 2;
+    ctx.strokeStyle = def.color;
     ctx.stroke();
 
-    ctx.textAlign = 'center';
+    // 아이콘
+    ctx.shadowBlur = 0;
     ctx.fillStyle = def.color;
-    ctx.font = 'bold 28px serif';
-    ctx.fillText(def.icon, cx + cardW / 2, cardY + 44);
+    ctx.font = `bold ${Math.floor(Math.min(44, cardW * 0.26))}px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(def.icon, cx + cardW / 2, iconY);
 
+    // 이름
     ctx.fillStyle = '#fff';
-    ctx.font = `bold ${Math.min(14, cardW / 13)}px 'Noto Sans KR', sans-serif`;
-    ctx.fillText(def.name, cx + cardW / 2, cardY + 72);
+    ctx.font = `bold ${Math.min(22, cardW * 0.10)}px 'Noto Sans KR', sans-serif`;
+    ctx.fillText(def.name, cx + cardW / 2, nameY);
 
-    if (ch.type === 'weapon' && ch.upgrade) {
-      ctx.fillStyle = '#ff0';
-      ctx.font = `12px 'Noto Sans KR', sans-serif`;
-      ctx.fillText(`Lv${player.weapons[ch.key].level} → Lv${player.weapons[ch.key].level + 1}`, cx + cardW / 2, cardY + 90);
-    } else if (ch.type === 'passive') {
-      const lvl = (player.passives[ch.key] || 0);
+    // 티어/레벨 표시
+    if (choice.type === 'weapon' && choice.upgrade) {
       ctx.fillStyle = '#adf';
-      ctx.font = `12px 'Noto Sans KR', sans-serif`;
-      ctx.fillText(`Lv${lvl} → Lv${lvl + 1}`, cx + cardW / 2, cardY + 90);
+      ctx.font = `bold ${Math.min(16, cardW * 0.075)}px 'Noto Sans KR', sans-serif`;
+      const wl = player.weapons[choice.key].level;
+      ctx.fillText(`Lv${wl} → Lv${wl + 1}`, cx + cardW / 2, tierY);
+    } else if (choice.type === 'passive') {
+      ctx.fillStyle = '#adf';
+      ctx.font = `bold ${Math.min(16, cardW * 0.075)}px 'Noto Sans KR', sans-serif`;
+      const pl = (player.passives[choice.key] || 0);
+      ctx.fillText(`Lv${pl} → Lv${pl + 1}`, cx + cardW / 2, tierY);
     } else {
       ctx.fillStyle = '#4f4';
-      ctx.font = `bold 12px 'Noto Sans KR', sans-serif`;
-      ctx.fillText('신규!', cx + cardW / 2, cardY + 90);
+      ctx.font = `bold ${Math.min(16, cardW * 0.075)}px 'Noto Sans KR', sans-serif`;
+      ctx.fillText('신규!', cx + cardW / 2, tierY);
     }
 
-    ctx.fillStyle = '#aaa';
-    ctx.font = `11px 'Noto Sans KR', sans-serif`;
-    wrapText(ctx, def.desc, cx + cardW / 2, cardY + 110, cardW - 16, 15);
+    // 설명(하단 버튼 영역을 침범하지 않게 라인 제한)
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
+    const descFont = Math.min(14, cardW * 0.065);
+    const lineH = Math.round(descFont * 1.35);
+    ctx.font = `${descFont}px 'Noto Sans KR', sans-serif`;
+    wrapText(ctx, def.desc, cx + cardW / 2, descY, cardW - 24, lineH, 3);
 
-    if (isHover) {
-      ctx.fillStyle = def.color;
-      ctx.font = `bold 11px 'Noto Sans KR', sans-serif`;
-      ctx.fillText('[ 선택 ]', cx + cardW / 2, cardY + cardH - 10);
-    }
+    // 하단 [선택] 버튼(항상 표시, 설명 안가리게 분리)
+    const btnY = cardY + cardH - footerH;
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(cx, btnY, cardW, footerH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.moveTo(cx, btnY);
+    ctx.lineTo(cx + cardW, btnY);
+    ctx.stroke();
+
+    ctx.fillStyle = hover ? '#fff' : 'rgba(255,255,255,0.75)';
+    ctx.font = `bold ${Math.min(14, cardW * 0.065)}px 'Noto Sans KR', sans-serif`;
+    ctx.fillText('[ 선택 ]', cx + cardW / 2, btnY + 20);
+
     ctx.restore();
   });
 }
+
 
 // ─── 메뉴 화면 ───────────────────────────────────────────────
 function drawMenu() {
@@ -1227,24 +1332,21 @@ function handleClick(e) {
       startGame();
     }
   } else if (state === 'levelup') {
-    const cardW = Math.min(200, (cw - 80) / 3 - 12);
-    const cardH = 160;
-    const gap = 12;
-    const total = levelUpChoices.length;
-    const startX = cx - (total * (cardW + gap) - gap) / 2;
-    const cardY = cy - 80;
-    levelUpChoices.forEach((ch, i) => {
+    const { cardW, cardH, gap, total, startX, cardY } = getLevelUpLayout();
+    for (let i = 0; i < total; i++) {
       const lx = startX + i * (cardW + gap);
       if (e.clientX >= lx && e.clientX <= lx + cardW && e.clientY >= cardY && e.clientY <= cardY + cardH) {
         selectChoice(i);
+        break;
       }
-    });
+    }
   } else if (state === 'gameover' || state === 'win') {
     if (e.clientX > cx - btnW/2 && e.clientX < cx + btnW/2 && e.clientY > cy + 100 && e.clientY < cy + 154) {
       state = 'menu';
     }
   }
 }
+
 
 // ─── 게임 초기화 ──────────────────────────────────────────────
 function startGame() {
