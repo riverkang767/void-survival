@@ -22,6 +22,7 @@
   }
   canvas { display: block; width: 100%; height: 100%; }
   #joystick-zone {
+    display: none;
     position: fixed;
     right: calc(env(safe-area-inset-right, 0px) + 12px);
     bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
@@ -117,6 +118,14 @@ document.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; e.
 document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 document.addEventListener('click', e => { mouseX = e.clientX; mouseY = e.clientY; handleClick(e); });
+
+document.addEventListener('pointerdown', e => {
+  // 모바일에서 click 지연/좌표 이슈 방지: UI 화면은 pointerdown으로 즉시 처리
+  if (state === 'menu' || state === 'levelup' || state === 'gameover' || state === 'win') {
+    mouseX = e.clientX; mouseY = e.clientY;
+    handleClick(e);
+  }
+}, { passive: false });
 
 // ─── 모바일/웹 터치 패드(우하단) ──────────────────────────────────────────
 const joystickZone = document.getElementById('joystick-zone');
@@ -477,7 +486,7 @@ const PASSIVES = {
   voidCore: { name: '보이드 코어', icon: '💠', desc: '최대 HP +30', color: '#48f', maxLevel: 5, effect: p => { p.maxHp += 30; p.hp = Math.min(p.hp + 30, p.maxHp); } },
   nanoshield: { name: '나노실드', icon: '🔰', desc: '방어력 +4% (피해 감소)', color: '#4f8', maxLevel: 5, effect: p => { p.armor = (p.armor || 0) + 0.04; } },
   thruster: { name: '추진기', icon: '🚀', desc: '이동속도 +25%', color: '#ff8', maxLevel: 5, effect: p => { p.spd += 0.3; } },
-  vampiricCell: { name: '흡혈 세포', icon: '🩸', desc: '처치 시 체력 회복 +0.8% (레벨업마다 효과 감소)', color: '#f44', maxLevel: 5, effect: p => { p.lifesteal = Math.min(0.04, (p.lifesteal || 0) + 0.008); } },
+  vampiricCell: { name: '흡혈 세포', icon: '🩸', desc: '처치 시 HP 흡수 +0.8% (최대 4%)', color: '#f44', maxLevel: 5, effect: p => { p.lifesteal = Math.min(0.04, (p.lifesteal || 0) + 0.008); } },
   powerCell: { name: '파워 셀', icon: '⚡', desc: '무기 공격력 +15%', color: '#ff4', maxLevel: 5, effect: p => { p.dmgMult = (p.dmgMult || 1) * 1.15; } },
   coolant: { name: '냉각 장치', icon: '❄️', desc: '무기 쿨타임 -20%', color: '#4ff', maxLevel: 5, effect: p => { p.cdMult = (p.cdMult || 1) * 0.8; } },
   xpBooster: { name: '경험치 부스터', icon: '📡', desc: '경험치 획득량 +20%', color: '#af4', maxLevel: 5, effect: p => { p.xpMult = (p.xpMult || 1) * 1.2; } },
@@ -520,8 +529,9 @@ function upgradeWeapon(key) {
   const def = WEAPONS[key];
   if (w.level >= def.maxLevel) return;
   const mod = def.levelMods[w.level - 1];
+  const DMG_SCALE = 1.8; // 후반 처치 속도 개선
   for (const k in mod) {
-    const add = (k === 'dmg') ? (mod[k] * 1.8) : mod[k];
+    const add = (k === 'dmg') ? (mod[k] * DMG_SCALE) : mod[k];
     w.stats[k] = (w.stats[k] || 0) + add;
   }
   w.level++;
@@ -554,8 +564,8 @@ function spawnEnemy(type) {
     id: enemyIdCounter++,
     type, x: player.x + Math.cos(angle) * spawnRadius,
     y: player.y + Math.sin(angle) * spawnRadius,
-    hp: def.hp * (1 + gameTime * 0.0022),
-    maxHp: def.hp * (1 + gameTime * 0.0022),
+    hp: def.hp * (1 + gameTime * 0.003),
+    maxHp: def.hp * (1 + gameTime * 0.003),
     dmg: def.dmg, spd: def.spd, size: def.size, xp: def.xp,
     color: def.color, glowColor: def.glowColor,
     hitFlash: 0, anim: rand(0, 100),
@@ -599,11 +609,13 @@ function killEnemy(e) {
   score += Math.ceil(e.xp * (1 + gameTime / 300));
   spawnBurst(e.x, e.y, 8, { color: e.color, size: rand(2, 5), life: 30, speed: 3 });
   spawnGem(e.x, e.y, e.xp);
-  // 흡혈(처치 시 회복): 레벨이 오를수록 gainXP()에서 효과가 조금씩 감소
+  
+  // 흡혈(처치 시 회복) — 후반 무적 방지용으로 낮은 퍼센트 + 레벨업 시 점감
   if (player.lifesteal) {
-    const heal = player.maxHp * player.lifesteal;
-    player.hp = Math.min(player.maxHp, player.hp + heal);
+    const heal = (e.maxHp || 0) * player.lifesteal;
+    if (heal > 0) player.hp = Math.min(player.maxHp, player.hp + heal);
   }
+
   // 진동 피드백
   try { if (navigator.vibrate) navigator.vibrate(15); } catch(err) {}
 }
@@ -630,11 +642,8 @@ function gainXP(amount) {
   while (player.xp >= player.xpNext) {
     player.xp -= player.xpNext;
     player.level++;
-    // 흡혈 밸런스: 레벨이 오를수록 점진적으로 감소(무적 방지)
-    if (player.lifesteal) {
-      const decay = (player.level < 10) ? 0.99 : (player.level < 25 ? 0.975 : 0.96);
-      player.lifesteal = Math.max(0.002, player.lifesteal * decay);
-    }
+    // 레벨업할수록 흡혈 효율을 소폭 낮춰서 후반 무적/적 누적 방지
+    if (player.lifesteal) player.lifesteal = Math.max(0, player.lifesteal - 0.0007);
     player.xpNext = Math.floor(35 * Math.pow(1.18, player.level - 1));
     triggerLevelUp();
   }
@@ -900,13 +909,14 @@ function drawHUD() {
 
   // ── 좌측 하단 HUD 레이아웃 (HP/레벨/스킬) ─────────────────
   const margin = 16;
-  const bottomPad = isMobile ? 46 : 32;
+  const bottomPad = isMobile ? 22 : 18;
+  const raise = isMobile ? 26 : 20; // HUD를 살짝 위로 올림
   const hpW = Math.min(260, cw * 0.58), hpH = 14;
   const xpW = hpW, xpH = 10;
 
   // 완전히 하단으로 내리기: 하단 패딩 기준으로 앵커
-  const hpY = ch - bottomPad - hpH;
-  const xpY = hpY - 8 - xpH;
+  const hpY = ch - bottomPad - hpH - raise;
+  const xpY = hpY - 10 - xpH;
 
   // XP 바 (레벨 텍스트는 바 안에 넣어서 겹침 방지)
   ctx.save();
@@ -919,14 +929,13 @@ function drawHUD() {
   ctx.strokeStyle = '#fff2';
   ctx.strokeRect(margin, xpY, xpW, xpH);
 
-  // XP 텍스트는 바 안으로 넣어서(모바일) 스킬바와 겹침 방지
-  ctx.fillStyle = '#eaf';
+  ctx.fillStyle = '#001';
   ctx.font = `bold 11px 'Noto Sans KR', sans-serif`;
   ctx.textAlign = 'left';
-  ctx.fillText(`Lv ${player.level}`, margin + 6, xpY + xpH - 2);
+  ctx.fillText(`Lv ${player.level}`, margin + 4, xpY + xpH - 2);
   ctx.textAlign = 'right';
   ctx.font = `11px 'Noto Sans KR', sans-serif`;
-  ctx.fillText(`${Math.floor(player.xp)} / ${player.xpNext}`, margin + xpW - 6, xpY + xpH - 2);
+  ctx.fillText(`${Math.floor(player.xp)} / ${player.xpNext}`, margin + xpW - 4, xpY + xpH - 2);
   ctx.restore();
 
   // HP 바
@@ -954,7 +963,7 @@ function drawHUD() {
   // 스킬바(무기 슬롯) — 좌측 하단에 붙여서 표시
   const slot = isMobile ? 34 : 36;
   const gap = 8;
-  const slotY = xpY - 16 - slot; // XP 바 위로 여유를 더 줘서 레벨/XP 표시와 겹침 방지
+  const slotY = xpY - 18 - slot; // XP 바 위에 여유 간격 확보(텍스트/겹침 방지)
   const barW = hpW;
 
   const entries = Object.entries(player.weapons);
@@ -1027,81 +1036,68 @@ function drawLevelUp() {
   ctx.font = `bold ${Math.min(32, cw / 14)}px 'Orbitron', 'Noto Sans KR', sans-serif`;
   ctx.shadowBlur = 20;
   ctx.shadowColor = '#ff0';
-  const headerY = isMobile ? (ch * 0.18) : (ch / 2 - 160);
-  ctx.fillText(`⬆ 레벨 업! — 레벨 ${player.level}`, cw / 2, headerY);
+  ctx.fillText(`⬆ 레벨 업! — 레벨 ${player.level}`, cw / 2, ch / 2 - 160);
 
   ctx.fillStyle = '#aaa';
   ctx.font = `${Math.min(16, cw / 26)}px 'Noto Sans KR', sans-serif`;
   ctx.shadowBlur = 0;
-  ctx.fillText('업그레이드를 선택하세요:', cw / 2, headerY + (isMobile ? 44 : 40));
+  ctx.fillText('업그레이드를 선택하세요:', cw / 2, ch / 2 - 120);
   ctx.restore();
 
-  // 모바일에서는 카드가 너무 작아지므로 세로(1열) 배치로 크게 보여줌
-  let cardW, cardH, gap, startX, startY;
+  const cardW = Math.min(200, (cw - 80) / 3 - 12);
+  const cardH = 160;
+  const gap = 12;
   const total = levelUpChoices.length;
+  const startX = cw / 2 - (total * (cardW + gap) - gap) / 2;
+  const cardY = ch / 2 - 80;
 
-  if (isMobile) {
-    cardW = Math.min(380, cw - 36);
-    cardH = 170;
-    gap = 14;
-    startX = cw / 2 - cardW / 2;
-    startY = ch / 2 - (total * (cardH + gap) - gap) / 2 + 40;
-  } else {
-    cardW = Math.min(220, (cw - 100) / 3 - 12);
-    cardH = 170;
-    gap = 12;
-    startX = cw / 2 - (total * (cardW + gap) - gap) / 2;
-    startY = ch / 2 - 80;
-  }
-
-  levelUpChoices.forEach((choice, i) => {
-    const cx = isMobile ? startX : (startX + i * (cardW + gap));
-    const cy = isMobile ? (startY + i * (cardH + gap)) : startY;
-    const isHover = mouseX >= cx && mouseX <= cx + cardW && mouseY >= cy && mouseY <= cy + cardH;
+  levelUpChoices.forEach((ch, i) => {
+    const cx = startX + i * (cardW + gap);
+    const isHover = mouseX >= cx && mouseX <= cx + cardW && mouseY >= cardY && mouseY <= cardY + cardH;
 
     ctx.save();
     ctx.shadowBlur = isHover ? 30 : 10;
-    const def = choice.type === 'weapon' ? WEAPONS[choice.key] : PASSIVES[choice.key];
+    const def = ch.type === 'weapon' ? WEAPONS[ch.key] : PASSIVES[ch.key];
     ctx.shadowColor = def.color;
     ctx.fillStyle = isHover ? '#1a1a3a' : '#0e0e24';
     ctx.strokeStyle = def.color;
     ctx.lineWidth = isHover ? 2.5 : 1.5;
-    roundRect(ctx, cx, cy, cardW, cardH, 12);
+    roundRect(ctx, cx, cardY, cardW, cardH, 12);
     ctx.fill();
     ctx.stroke();
 
     ctx.textAlign = 'center';
     ctx.fillStyle = def.color;
-    ctx.font = `bold ${isMobile ? 44 : 30}px serif`;
-    ctx.fillText(def.icon, cx + cardW / 2, cy + 44);
+    ctx.font = 'bold 28px serif';
+    ctx.fillText(def.icon, cx + cardW / 2, cardY + 44);
 
     ctx.fillStyle = '#fff';
-    ctx.font = `bold ${isMobile ? 18 : Math.min(15, cardW / 13)}px 'Noto Sans KR', sans-serif`;
-    ctx.fillText(def.name, cx + cardW / 2, cy + 72);
+    ctx.font = `bold ${Math.min(14, cardW / 13)}px 'Noto Sans KR', sans-serif`;
+    ctx.fillText(def.name, cx + cardW / 2, cardY + 72);
 
-    if (choice.type === 'weapon' && choice.upgrade) {
+    if (ch.type === 'weapon' && ch.upgrade) {
       ctx.fillStyle = '#ff0';
-      ctx.font = `${isMobile ? 15 : 12}px 'Noto Sans KR', sans-serif`;
-      ctx.fillText(`Lv${player.weapons[choice.key].level} → Lv${player.weapons[choice.key].level + 1}`, cx + cardW / 2, cy + 92);
-    } else if (choice.type === 'passive') {
-      const lvl = (player.passives[choice.key] || 0);
+      ctx.font = `12px 'Noto Sans KR', sans-serif`;
+      ctx.fillText(`Lv${player.weapons[ch.key].level} → Lv${player.weapons[ch.key].level + 1}`, cx + cardW / 2, cardY + 90);
+    } else if (ch.type === 'passive') {
+      const lvl = (player.passives[ch.key] || 0);
       ctx.fillStyle = '#adf';
-      ctx.font = `${isMobile ? 15 : 12}px 'Noto Sans KR', sans-serif`;
-      ctx.fillText(`Lv${lvl} → Lv${lvl + 1}`, cx + cardW / 2, cy + 92);
+      ctx.font = `12px 'Noto Sans KR', sans-serif`;
+      ctx.fillText(`Lv${lvl} → Lv${lvl + 1}`, cx + cardW / 2, cardY + 90);
     } else {
       ctx.fillStyle = '#4f4';
-      ctx.font = `bold ${isMobile ? 15 : 12}px 'Noto Sans KR', sans-serif`;
-      ctx.fillText('신규!', cx + cardW / 2, cy + 90);
+      ctx.font = `bold 12px 'Noto Sans KR', sans-serif`;
+      ctx.fillText('신규!', cx + cardW / 2, cardY + 90);
     }
 
     ctx.fillStyle = '#aaa';
-    ctx.font = `${isMobile ? 14 : 11}px 'Noto Sans KR', sans-serif`;
-    wrapText(ctx, def.desc, cx + cardW / 2, cy + 112, cardW - 20, isMobile ? 18 : 15);
+    ctx.font = `11px 'Noto Sans KR', sans-serif`;
+    wrapText(ctx, def.desc, cx + cardW / 2, cardY + 110, cardW - 16, 15);
 
     if (isHover) {
       ctx.fillStyle = def.color;
-      ctx.font = `bold ${isMobile ? 14 : 11}px 'Noto Sans KR', sans-serif`;
-      ctx.fillText('[ 선택 ]', cx + cardW / 2, cy + cardH - 10);
+      ctx.font = `bold 11px 'Noto Sans KR', sans-serif`;
+      ctx.fillText('[ 선택 ]', cx + cardW / 2, cardY + cardH - 10);
     }
     ctx.restore();
   });
@@ -1294,9 +1290,10 @@ function update(dt) {
     const ne = findNearestEnemy(player, 400);
     if (ne) player.facing = Math.atan2(ne.y - player.y, ne.x - player.x);
   }
-  player.x = player.x + vx * player.spd * 60 * dt, -WORLD / 2, WORLD / 2;
-  player.y = player.y + vy * player.spd * 60 * dt, -WORLD / 2, WORLD / 2;
-  player.anim += dt * 60;
+    // 월드 경계 제거: 어디로든 이동 가능
+  player.x += vx * player.spd * 60 * dt;
+  player.y += vy * player.spd * 60 * dt;
+player.anim += dt * 60;
 
   // 카메라 추적
   cam.x = lerp(cam.x, player.x, 0.1);
@@ -1311,7 +1308,9 @@ function update(dt) {
     spawnTimer = 0;
     const types = getWaveTypes();
     const count = getSpawnCount();
+    const MAX_ENEMIES = isMobile ? 180 : 260;
     for (let i = 0; i < count; i++) {
+      if (enemies.length >= MAX_ENEMIES) break;
       spawnEnemy(types[randInt(0, types.length - 1)]);
     }
     if (Math.floor(gameTime) % 300 < 1) spawnEnemy('titan');
@@ -1424,6 +1423,8 @@ function update(dt) {
 
 // ─── 메인 렌더 ───────────────────────────────────────────────
 function render() {
+  // 메뉴/레벨업/엔딩 화면에서는 조이스틱 UI 숨김
+  joystickZone.style.display = (state === 'playing') ? 'block' : 'none';
   if (state !== 'playing') endJoystick();
   if (state === 'menu') { drawMenu(); return; }
   if (state === 'gameover') { drawEndScreen(false); return; }
@@ -1516,8 +1517,8 @@ function render() {
     ctx.restore();
   }
 
-  // HUD
-  drawHUD();
+  // HUD (레벨업 화면에서는 가리지 않도록 숨김)
+  if (state !== 'levelup') drawHUD();
 
   // 레벨업 오버레이
   if (state === 'levelup') drawLevelUp();
