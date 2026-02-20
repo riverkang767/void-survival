@@ -136,18 +136,37 @@ function dmgE(e,raw){const fd=Math.max(1,raw*P.dmgMult);e.hp-=fd;e.flash=6;spawn
 function killE(e){const i=enemies.indexOf(e);if(i<0)return;enemies.splice(i,1);P.kills++;score+=Math.ceil(e.xp*(1+gameTime/300));burst(e.x,e.y,6,{color:e.color,size:rng(2,5),life:25,speed:3});
   if(e.isBoss){chests.push({x:e.x,y:e.y,life:0});waveMsg='🎁 보물상자 드롭!';waveMsgT=2}
   if(e.xp>=20){for(let j=0;j<4;j++)spawnGem(e.x+rng(-12,12),e.y+rng(-12,12),Math.ceil(e.xp/4))}else spawnGem(e.x,e.y,e.xp);
-  const r=Math.random();if(r<0.04)pickups.push({x:e.x,y:e.y,type:'heal',life:0});else if(r<0.06)pickups.push({x:e.x,y:e.y,type:'magnet',life:0});else if(r<0.065)pickups.push({x:e.x,y:e.y,type:'nuke',life:0});
+  // 드랍 밸런스: 힐/자석/전멸(보라 육각형) 드랍 확률 낮춤 + 보스(상자 드랍)에서는 드랍 안 함
+  if(!e.isBoss){
+    const r=Math.random();
+    if(r<0.015)pickups.push({x:e.x,y:e.y,type:'heal',life:0});
+    else if(r<0.022)pickups.push({x:e.x,y:e.y,type:'magnet',life:0});
+    else if(r<0.024)pickups.push({x:e.x,y:e.y,type:'nuke',life:0});
+  }
+
   try{navigator.vibrate&&navigator.vibrate(10)}catch(e2){}shake(0.03)}
 // ═══ 웨이브 ═══
 let spawnTmr=0,nextBoss=90;
 function spI(){return Math.max(15,65-gameTime*0.04)}
 function wTypes(){const t=gameTime,p=['drone'];if(t>20)p.push('speeder');if(t>50)p.push('brute');if(t>100)p.push('bomber');if(t>250)p.push('titan');return p}
 function sCnt(){return Math.floor(1+gameTime/50)}
-function openChest(){chestChoices=genChoices(rni(3,5));state='chest'}
+function openChest(){chestChoices=genChoices(rni(3,5),{src:'chest'});state='chest'}
 // ═══ 레벨업 ═══
 let lvChoices=[];
 function gainXP(a){P.xp+=a*P.xpMult;while(P.xp>=P.xpNext){P.xp-=P.xpNext;P.level++;P.xpNext=Math.floor(30*Math.pow(1.13,P.level-1));state='levelup';lvChoices=genChoices(3);try{navigator.vibrate&&navigator.vibrate([20,30,20])}catch(e){}}}
-function genChoices(n){const av=[];for(const k in P.weapons){if(P.weapons[k].level<WEAPONS[k].maxLevel)av.push({t:'w',k,up:true})}for(const k in WEAPONS){if(!P.weapons[k]&&Object.keys(P.weapons).length<6)av.push({t:'w',k,up:false})}for(const k in PASSIVES){const lv=P.passives[k]||0;if(lv<PASSIVES[k].maxLevel)av.push({t:'p',k})}return av.sort(()=>Math.random()-0.5).slice(0,Math.min(n,av.length))}
+const CHEST_EXCLUDE_PASSIVES=new Set(['regen','magnet','vampiricCell']);
+function genChoices(n,opts={}){const av=[];
+  // 무기 업그레이드
+  for(const k in P.weapons){if(P.weapons[k].level<WEAPONS[k].maxLevel)av.push({t:'w',k,up:true})}
+  // 신규 무기
+  for(const k in WEAPONS){if(!P.weapons[k]&&Object.keys(P.weapons).length<6)av.push({t:'w',k,up:false})}
+  // 패시브 (상자에서는 일부 제외)
+  for(const k in PASSIVES){
+    if(opts.src==='chest' && CHEST_EXCLUDE_PASSIVES.has(k)) continue;
+    const lv=P.passives[k]||0; if(lv<PASSIVES[k].maxLevel)av.push({t:'p',k});
+  }
+  return av.sort(()=>Math.random()-0.5).slice(0,Math.min(n,av.length))
+}
 function selChoice(choices,i){const c=choices[i];if(!c)return;if(c.t==='w'){if(c.up)upgW(c.k);else addW(c.k)}else addPass(c.k)}
 // ═══ 그리기 ═══
 function rRect(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.lineTo(x+w-r,y);c.quadraticCurveTo(x+w,y,x+w,y+r);c.lineTo(x+w,y+h-r);c.quadraticCurveTo(x+w,y+h,x+w-r,y+h);c.lineTo(x+r,y+h);c.quadraticCurveTo(x,y+h,x,y+h-r);c.lineTo(x,y+r);c.quadraticCurveTo(x,y,x+r,y);c.closePath()}
