@@ -34,6 +34,7 @@ const MAX_EN=isMobile?140:200,MAX_PT=isMobile?150:350;
 let state='menu',gameTime=0,frame=0,lastTs=0,score=0,highScore=0;
 try{highScore=+(localStorage.getItem('vs5_hi')||0)}catch(e){}
 let shakeT=0,shakeX=0,shakeY=0,waveMsg='',waveMsgT=0,chestChoices=null;
+let magnetT=0;
 const keys={};let mouseX=0,mouseY=0;
 addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;e.preventDefault()});
 addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false});
@@ -129,27 +130,38 @@ const EDEFS={
   titan:{hp:700,dmg:30,spd:0.4,size:40,xp:50,color:'#a0f',glow:'#60a'},
   miniboss:{hp:2500,dmg:18,spd:0.55,size:34,xp:80,color:'#f22',glow:'#f00'},
 };
-function spawnE(type){if(enemies.length>=MAX_EN)return;const d=EDEFS[type],a=rng(0,PI2),sr=Math.hypot(W(),H())/2+80,hs=1+gameTime*0.002;enemies.push({id:eid++,type,x:P.x+Math.cos(a)*sr,y:P.y+Math.sin(a)*sr,hp:d.hp*hs,maxHp:d.hp*hs,dmg:d.dmg,spd:d.spd,size:d.size,xp:d.xp,color:d.color,glow:d.glow,flash:0,anim:rng(0,100),isBoss:type==='miniboss'||type==='titan'})}
+function spawnE(type){if(enemies.length>=MAX_EN)return;const d=EDEFS[type],a=rng(0,PI2),sr=Math.hypot(W(),H())/2+80,hs=1+gameTime*0.0024;enemies.push({id:eid++,type,x:P.x+Math.cos(a)*sr,y:P.y+Math.sin(a)*sr,hp:d.hp*hs,maxHp:d.hp*hs,dmg:d.dmg,spd:d.spd,size:d.size,xp:d.xp,color:d.color,glow:d.glow,flash:0,anim:rng(0,100),isBoss:type==='miniboss'})}
 function findNE(from,md,skip=0){let b=null,bd=1e9,sk=0;for(const e of enemies){const d=dst(from,e);if(d<md&&d<bd){if(sk<skip){sk++;continue}bd=d;b=e}}return b}
 // dmgMult는 여기서만 적용
 function dmgE(e,raw){const fd=Math.max(1,raw*P.dmgMult);e.hp-=fd;e.flash=6;spawnDmg(e.x,e.y-e.size,fd);if(P.lifesteal>0)P.hp=Math.min(P.maxHp,P.hp+fd*P.lifesteal);if(e.hp<=0)killE(e)}
 function killE(e){const i=enemies.indexOf(e);if(i<0)return;enemies.splice(i,1);P.kills++;score+=Math.ceil(e.xp*(1+gameTime/300));burst(e.x,e.y,6,{color:e.color,size:rng(2,5),life:25,speed:3});
-  if(e.isBoss){chests.push({x:e.x,y:e.y,life:0});waveMsg='🎁 보물상자 드롭!';waveMsgT=2}
+  if(e.type==='miniboss' && Math.random()<0.65){chests.push({x:e.x,y:e.y,life:0});waveMsg='🎁 보물상자 드롭!';waveMsgT=2}
   if(e.xp>=20){for(let j=0;j<4;j++)spawnGem(e.x+rng(-12,12),e.y+rng(-12,12),Math.ceil(e.xp/4))}else spawnGem(e.x,e.y,e.xp);
   // 드랍 밸런스: 힐/자석/전멸(보라 육각형) 드랍 확률 낮춤 + 보스(상자 드랍)에서는 드랍 안 함
   if(!e.isBoss){
     const r=Math.random();
-    if(r<0.015)pickups.push({x:e.x,y:e.y,type:'heal',life:0});
-    else if(r<0.022)pickups.push({x:e.x,y:e.y,type:'magnet',life:0});
-    else if(r<0.024)pickups.push({x:e.x,y:e.y,type:'nuke',life:0});
+    // 더 하드하게: 힐/자석/전멸 드랍 확률 추가 하향
+    if(r<0.007)pickups.push({x:e.x,y:e.y,type:'heal',life:0});
+    else if(r<0.0095)pickups.push({x:e.x,y:e.y,type:'magnet',life:0});
+    else if(r<0.0103)pickups.push({x:e.x,y:e.y,type:'nuke',life:0});
   }
 
   try{navigator.vibrate&&navigator.vibrate(10)}catch(e2){}shake(0.03)}
 // ═══ 웨이브 ═══
 let spawnTmr=0,nextBoss=90;
 function spI(){return Math.max(15,65-gameTime*0.04)}
-function wTypes(){const t=gameTime,p=['drone'];if(t>20)p.push('speeder');if(t>50)p.push('brute');if(t>100)p.push('bomber');if(t>250)p.push('titan');return p}
-function sCnt(){return Math.floor(1+gameTime/50)}
+function wTypes(){
+  const t=gameTime;
+  // 가중치 기반(배열 중복)으로 상위 몹 비중을 조절
+  const p=['drone','drone','drone'];
+  if(t>20) p.push('speeder','speeder');
+  if(t>50) p.push('brute');
+  if(t>100) p.push('bomber');
+  // 보라 육각형(titan)은 자주 나오면 상자/난이도 밸런스가 깨져서 낮은 확률로만 등장
+  if(t>250) p.push('titan');
+  return p;
+}
+function sCnt(){return Math.min(6,Math.floor(1+gameTime/45))}
 function openChest(){chestChoices=genChoices(rni(3,5),{src:'chest'});state='chest'}
 // ═══ 레벨업 ═══
 let lvChoices=[];
@@ -206,15 +218,21 @@ function update(dt){if(state!=='playing')return;frame++;gameTime+=dt;if(gameTime
   let vx=0,vy=0;if(keys['w']||keys['arrowup'])vy-=1;if(keys['s']||keys['arrowdown'])vy+=1;if(keys['a']||keys['arrowleft'])vx-=1;if(keys['d']||keys['arrowright'])vx+=1;if(Math.hypot(jDir.x,jDir.y)>0.15){vx+=jDir.x;vy+=jDir.y}if(vx!==0||vy!==0){const m=Math.hypot(vx,vy);vx/=m;vy/=m;P.facing=Math.atan2(vy,vx)}else{const ne=findNE(P,400);if(ne)P.facing=Math.atan2(ne.y-P.y,ne.x-P.x)}P.x+=vx*P.spd*60*dt;P.y+=vy*P.spd*60*dt;P.anim+=dt*60;
   cam.x=lrp(cam.x,P.x,0.1);cam.y=lrp(cam.y,P.y,0.1);if(P.invuln>0)P.invuln-=dt;if(shakeT>0){shakeT-=dt;shakeX=rng(-2.5,2.5)*Math.min(1,shakeT*8);shakeY=rng(-2.5,2.5)*Math.min(1,shakeT*8)}else{shakeX=0;shakeY=0}if(waveMsgT>0)waveMsgT-=dt;
   if(P.regenRate>0)P.hp=Math.min(P.maxHp,P.hp+P.regenRate*dt);
+  if(magnetT>0){magnetT=Math.max(0,magnetT-dt);if(frame%3===0)spawnP(P.x,P.y,{color:'#c6f',size:rng(2,4),life:18,speed:rng(1,3)});}
   spawnTmr++;if(spawnTmr>=spI()){spawnTmr=0;const ts=wTypes(),cn=sCnt();for(let i=0;i<cn;i++)spawnE(ts[rni(0,ts.length-1)])}
   if(gameTime>=nextBoss){spawnE('miniboss');nextBoss+=90;waveMsg='⚠ 엘리트 출현!';waveMsgT=2.5;shake(0.12)}
   if(enemies.length>MAX_EN*0.7){const mr=Math.hypot(W(),H())+200;for(let i=enemies.length-1;i>=0;i--){if(!enemies[i].isBoss&&dst(P,enemies[i])>mr)enemies.splice(i,1)}}
   for(const[k,w]of Object.entries(P.weapons)){const d=WEAPONS[k],cd=d.baseCooldown*P.cdMult;w.cd=Math.max(0,w.cd-1);if(w.cd===0||d.baseCooldown<=10){d.fire(P,w.stats,w);if(d.baseCooldown>10)w.cd=cd}}
   for(let i=projectiles.length-1;i>=0;i--){const p=projectiles[i];p.x+=p.vx;p.y+=p.vy;p.life--;if(p.life<=0){if(p.type==='nova'){const{er,dmg:d2}=p.extra;burst(p.x,p.y,12,{color:'#f80',size:rng(3,7),life:25,speed:4});shake(0.08);for(const e of enemies){if(dst(p,e)<er+e.size)dmgE(e,d2)}}projectiles.splice(i,1);continue}for(let j=enemies.length-1;j>=0;j--){const e=enemies[j];if(p.hit.has(e.id))continue;if(dst(p,e)<p.size+e.size){dmgE(e,p.dmg);p.hit.add(e.id);p.pierce--;burst(p.x,p.y,2,{color:p.color,size:2,life:10});if(p.type==='chain'){const nx=findNE(e,160);if(nx&&!p.hit.has(nx.id)){const a=Math.atan2(nx.y-e.y,nx.x-e.x);p.vx=Math.cos(a)*12;p.vy=Math.sin(a)*12;p.x=e.x;p.y=e.y}}if(p.pierce<=0){projectiles.splice(i,1);break}}}}
   for(const e of enemies){const dx=P.x-e.x,dy=P.y-e.y,d=Math.hypot(dx,dy);if(d>1){e.x+=(dx/d)*e.spd;e.y+=(dy/d)*e.spd}e.anim++;if(e.flash>0)e.flash--;if(d<e.size+P.size&&P.invuln<=0){P.hp-=e.dmg*(1-P.armor);P.invuln=0.8;burst(P.x,P.y,4,{color:'#f44',size:3,life:15});shake(0.06);try{navigator.vibrate&&navigator.vibrate(40)}catch(err){}if(P.hp<=0){if(P.revives>0){P.revives--;P.hp=P.maxHp;P.invuln=3;waveMsg='👼 부활!';waveMsgT=2;for(const e2 of enemies){if(dst(P,e2)<200){const a=Math.atan2(e2.y-P.y,e2.x-P.x);e2.x+=Math.cos(a)*150;e2.y+=Math.sin(a)*150}}burst(P.x,P.y,25,{color:'#ffd',size:5,life:35,speed:6});shake(0.2)}else{P.hp=0;state='gameover';return}}}}
-  for(let i=gems.length-1;i>=0;i--){const g=gems[i],d=dst(P,g);if(d<45){gainXP(g.val);gems.splice(i,1);continue}if(d<P.magR){const dx=P.x-g.x,dy=P.y-g.y;g.x+=dx*0.12;g.y+=dy*0.12}g.life++;g.fa+=0.05}
+  for(let i=gems.length-1;i>=0;i--){const g=gems[i],d=dst(P,g);if(d<45){gainXP(g.val);gems.splice(i,1);continue}const magR = (magnetT>0)? P.magR*2.2 : P.magR;
+    if(d<magR){const dx=P.x-g.x,dy=P.y-g.y;const k=(magnetT>0)?0.28:0.12;g.x+=dx*k;g.y+=dy*k}g.life++;g.fa+=0.05}
   for(let i=chests.length-1;i>=0;i--){chests[i].life++;if(dst(P,chests[i])<40){chests.splice(i,1);openChest()}}
-  for(let i=pickups.length-1;i>=0;i--){const pk=pickups[i];pk.life++;if(dst(P,pk)<35){if(pk.type==='heal'){P.hp=Math.min(P.maxHp,P.hp+30);burst(P.x,P.y,4,{color:'#4f4',size:3,life:12})}else if(pk.type==='magnet'){for(const g of gems){g.x=lrp(g.x,P.x,0.95);g.y=lrp(g.y,P.y,0.95)}}else if(pk.type==='nuke'){const sr=Math.hypot(W(),H())/2;for(let j=enemies.length-1;j>=0;j--){if(dst(P,enemies[j])<sr)dmgE(enemies[j],9999)}burst(P.x,P.y,30,{color:'#fff',size:6,life:35,speed:7});shake(0.2);waveMsg='💀 전멸!';waveMsgT=1.5}pickups.splice(i,1)}}
+  for(let i=pickups.length-1;i>=0;i--){const pk=pickups[i];pk.life++;if(dst(P,pk)<35){if(pk.type==='heal'){P.hp=Math.min(P.maxHp,P.hp+20);burst(P.x,P.y,4,{color:'#4f4',size:3,life:12})}else if(pk.type==='magnet'){
+        magnetT=Math.max(magnetT,6.0);
+        waveMsg='🧲 자석 활성화!';waveMsgT=1.2;
+        // 즉시 흡수 금지: 끌어당기는 효과만 강화
+      }else if(pk.type==='nuke'){const sr=Math.hypot(W(),H())/2;for(let j=enemies.length-1;j>=0;j--){if(dst(P,enemies[j])<sr)dmgE(enemies[j],9999)}burst(P.x,P.y,30,{color:'#fff',size:6,life:35,speed:7});shake(0.2);waveMsg='💀 전멸!';waveMsgT=1.5}pickups.splice(i,1)}}
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vx*=0.93;p.vy*=0.93;p.life--;if(p.life<=0)particles.splice(i,1)}
   for(let i=dmgNums.length-1;i>=0;i--){dmgNums[i].y-=0.8;dmgNums[i].life--;if(dmgNums[i].life<=0)dmgNums.splice(i,1)}}
 // ═══ 렌더 ═══
