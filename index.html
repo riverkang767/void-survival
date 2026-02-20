@@ -25,7 +25,7 @@
     position: fixed;
     right: calc(env(safe-area-inset-right, 0px) + 12px);
     bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-    width: 170px; height: 170px;
+    width: 130px; height: 130px;
     z-index: 20;
     pointer-events: auto;
     touch-action: none;
@@ -35,7 +35,7 @@
     position: fixed;
     right: calc(env(safe-area-inset-right, 0px) + 12px);
     bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
-    width: 170px; height: 170px;
+    width: 130px; height: 130px;
     border-radius: 50%;
     border: 2px solid rgba(0,255,255,0.25);
     background: radial-gradient(circle, rgba(0,255,255,0.10) 0%, rgba(0,255,255,0.03) 55%, transparent 72%);
@@ -45,7 +45,7 @@
   }
   #joystick-knob {
     position: absolute;
-    width: 48px; height: 48px;
+    width: 38px; height: 38px;
     border-radius: 50%;
     background: radial-gradient(circle, rgba(0,255,255,0.5) 0%, rgba(0,255,255,0.15) 70%);
     border: 2px solid rgba(0,255,255,0.6);
@@ -871,7 +871,7 @@ function drawHUD() {
   ctx.fillText(`${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`, cw / 2, safeTop + 28);
   ctx.restore();
 
-  // 점수
+  // 점수 (상단 중앙)
   ctx.save();
   ctx.fillStyle = '#aef';
   ctx.font = `${fontSize - 4}px 'Noto Sans KR', sans-serif`;
@@ -879,71 +879,130 @@ function drawHUD() {
   ctx.fillText(`점수: ${score.toLocaleString()}`, cw / 2, safeTop + 50);
   ctx.restore();
 
+  // 처치 수 (우측 상단)
+  ctx.save();
+  ctx.fillStyle = '#f88';
+  ctx.font = `${fontSize - 6}px 'Noto Sans KR', sans-serif`;
+  ctx.textAlign = 'right';
+  ctx.shadowBlur = 0;
+  ctx.fillText(`⚔ ${player.kills} 처치`, cw - 16, safeTop + 50);
+  ctx.restore();
+
+  // ── 좌측 하단 HUD 레이아웃 (HP/레벨/스킬) ─────────────────
+  const margin = 16;
+  const bottomPad = isMobile ? 18 : 16;
+  const hpW = Math.min(260, cw * 0.58), hpH = 14;
+  const xpW = hpW, xpH = 10;
+
+  // 완전히 하단으로 내리기: 하단 패딩 기준으로 앵커
+  const hpY = ch - bottomPad - hpH;
+  const xpY = hpY - 8 - xpH;
+
+  // XP 바 (레벨 텍스트는 바 안에 넣어서 겹침 방지)
+  ctx.save();
+  ctx.fillStyle = '#002';
+  ctx.fillRect(margin, xpY, xpW, xpH);
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = '#88f';
+  ctx.fillStyle = '#88f';
+  ctx.fillRect(margin, xpY, xpW * (player.xp / player.xpNext), xpH);
+  ctx.strokeStyle = '#fff2';
+  ctx.strokeRect(margin, xpY, xpW, xpH);
+
+  ctx.fillStyle = '#aaf';
+  ctx.font = `bold 11px 'Noto Sans KR', sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`Lv ${player.level}`, margin, xpY - 6);
+  ctx.textAlign = 'right';
+  ctx.font = `11px 'Noto Sans KR', sans-serif`;
+  ctx.fillText(`${Math.floor(player.xp)} / ${player.xpNext}`, margin + xpW, xpY - 6);
+  ctx.restore();
+
   // HP 바
-  const hpW = Math.min(220, cw * 0.5), hpH = 14;
-  const hpX = 16, hpY = ch - (isMobile ? 160 : 90);
   ctx.save();
   ctx.fillStyle = '#200';
-  ctx.fillRect(hpX, hpY, hpW, hpH);
+  ctx.fillRect(margin, hpY, hpW, hpH);
   const hpPct = player.hp / player.maxHp;
   const hpColor = hpPct > 0.5 ? '#4f4' : hpPct > 0.25 ? '#ff4' : '#f44';
   ctx.shadowBlur = 8;
   ctx.shadowColor = hpColor;
   ctx.fillStyle = hpColor;
-  ctx.fillRect(hpX, hpY, hpW * hpPct, hpH);
+  ctx.fillRect(margin, hpY, hpW * hpPct, hpH);
   ctx.strokeStyle = '#fff3';
   ctx.lineWidth = 1;
-  ctx.strokeRect(hpX, hpY, hpW, hpH);
+  ctx.strokeRect(margin, hpY, hpW, hpH);
+
+  // HP 텍스트는 바 안에(세로 공간 절약)
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#fff';
   ctx.font = `11px 'Noto Sans KR', sans-serif`;
   ctx.textAlign = 'left';
-  ctx.fillText(`HP: ${Math.ceil(player.hp)} / ${player.maxHp}`, hpX, hpY - 4);
+  ctx.fillText(`HP ${Math.ceil(player.hp)} / ${player.maxHp}`, margin + 6, hpY + hpH - 3);
   ctx.restore();
 
-  // XP 바
-  const xpW = hpW, xpH = 8;
-  const xpX = hpX, xpY = hpY + hpH + 10;
-  ctx.save();
-  ctx.fillStyle = '#002';
-  ctx.fillRect(xpX, xpY, xpW, xpH);
-  ctx.shadowBlur = 8;
-  ctx.shadowColor = '#88f';
-  ctx.fillStyle = '#88f';
-  ctx.fillRect(xpX, xpY, xpW * (player.xp / player.xpNext), xpH);
-  ctx.strokeStyle = '#fff2';
-  ctx.strokeRect(xpX, xpY, xpW, xpH);
-  ctx.fillStyle = '#aaf';
-  ctx.font = `11px 'Noto Sans KR', sans-serif`;
-  ctx.fillText(`레벨 ${player.level}`, xpX, xpY + xpH + 14);
-  ctx.restore();
+  // 스킬바(무기 슬롯) — 좌측 하단에 붙여서 표시
+  const slot = isMobile ? 34 : 36;
+  const gap = 8;
+  const slotY = xpY - 10 - slot; // XP 바 위에 붙여서(하단 클러스터 유지)
+  const barW = hpW;
 
-  // 무기 목록
-  let wIdx = 0;
+  const entries = Object.entries(player.weapons);
+  const maxSlots = Math.max(1, Math.floor((barW + gap) / (slot + gap)));
+  const shown = entries.slice(0, maxSlots);
+
   ctx.save();
-  for (const [key, w] of Object.entries(player.weapons)) {
+  let i = 0;
+  for (const [key, w] of shown) {
     const def = WEAPONS[key];
-    const wx = 16, wy = hpY - 36 - wIdx * 26;
-    ctx.fillStyle = '#fff1';
-    ctx.fillRect(wx, wy, Math.min(180, cw * 0.45), 22);
-    ctx.fillStyle = def.color;
-    ctx.font = `12px 'Noto Sans KR', sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.fillText(`${def.icon} ${def.name} Lv${w.level}`, wx + 6, wy + 15);
-    const cdW = (w.cooldownTimer / (def.baseCooldown * (player.cdMult || 1)));
-    ctx.fillStyle = def.color + '66';
-    ctx.fillRect(wx, wy + 18, Math.min(180, cw * 0.45) * (1 - cdW), 3);
-    wIdx++;
-  }
-  ctx.restore();
+    const x = margin + i * (slot + gap);
 
-  // 처치 수
-  ctx.save();
-  ctx.fillStyle = '#f88';
-  ctx.font = `12px 'Noto Sans KR', sans-serif`;
-  ctx.textAlign = 'right';
-  ctx.fillText(`⚔ ${player.kills} 처치`, cw - 16, ch - (isMobile ? 160 : 40));
+    // 슬롯 배경
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(x, slotY, slot, slot);
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.strokeRect(x, slotY, slot, slot);
+
+    // 아이콘
+    ctx.fillStyle = def.color;
+    ctx.font = `bold ${Math.floor(slot * 0.55)}px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(def.icon, x + slot / 2, slotY + slot / 2 + 6);
+
+    // 레벨 뱃지
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x + slot - 18, slotY + 2, 16, 14);
+    ctx.fillStyle = '#fff';
+    ctx.font = `10px 'Noto Sans KR', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`Lv${w.level}`, x + slot - 10, slotY + 13);
+
+    // 쿨다운 바
+    const denom = (def.baseCooldown * (player.cdMult || 1));
+    const cd = denom ? (w.cooldownTimer / denom) : 0;
+    ctx.fillStyle = def.color + '88';
+    ctx.fillRect(x, slotY + slot - 4, slot * (1 - cd), 4);
+
+    i++;
+  }
+
+  // 슬롯이 더 많으면 "+N" 표시
+  if (entries.length > shown.length) {
+    const x = margin + shown.length * (slot + gap);
+    if (x + slot <= margin + barW) {
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(x, slotY, slot, slot);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.strokeRect(x, slotY, slot, slot);
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold 12px 'Noto Sans KR', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`+${entries.length - shown.length}`, x + slot / 2, slotY + slot / 2 + 4);
+    }
+  }
+
   ctx.restore();
 }
+
 
 // ─── 레벨업 화면 ──────────────────────────────────────────────
 function drawLevelUp() {
@@ -1211,8 +1270,8 @@ function update(dt) {
     const ne = findNearestEnemy(player, 400);
     if (ne) player.facing = Math.atan2(ne.y - player.y, ne.x - player.x);
   }
-  player.x = clamp(player.x + vx * player.spd * 60 * dt, -WORLD / 2, WORLD / 2);
-  player.y = clamp(player.y + vy * player.spd * 60 * dt, -WORLD / 2, WORLD / 2);
+  player.x = player.x + vx * player.spd * 60 * dt, -WORLD / 2, WORLD / 2;
+  player.y = player.y + vy * player.spd * 60 * dt, -WORLD / 2, WORLD / 2;
   player.anim += dt * 60;
 
   // 카메라 추적
